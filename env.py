@@ -1,2 +1,186 @@
-import socket, multiprocessing.shared_memory, sysv_ipc, signal, json, select
+from multiprocessing import Process, shared_memory, Value
+import socket
+import sysv_ipc
+import signal
+import sys
+import random
+import time
+import json
+import subprocess
+import os
+
 import config
+import utils
+
+
+shm = None
+global_lock = None # semaphore utiliser comme un lock plutard
+mq = None
+children_processes = []
+drought_flag = Value('b', False)
+
+
+def cleanup(signum, frame):
+    """Nettoyage des ressources lors de l'arrêt"""
+    print("\n[ENV] Arrêt du serveur...")
+    
+    # Terminer les enfants
+    for p in children_processes:
+        if isinstance(p, subprocess.Popen) or isinstance(p, Process):
+            p.terminate()
+
+    # Nettoyage SHM
+    global shm
+    if shm:
+        shm.close()
+        try: shm.unlink()
+        except: pass
+
+    # Nettoyage Lock
+    global global_lock
+    if global_lock:
+        try: global_lock.remove()
+        except: pass
+
+    # Nettoyage MQ
+    global mq
+    if mq:
+        try: mq.remove()
+        except: pass
+
+    sys.exit(0)
+
+
+def f(client_socket, address):
+    try:
+        current_shm = shared_memory.SharedMemory(name=config.SHM_NAME)
+        # On se connecte au Lock Système
+        current_lock = sysv_ipc.Semaphore(config.SEM_KEY)
+    except:
+        return
+
+    with client_socket:
+        rx, ry = 0, 0
+        found = False
+        
+        # [LOCK] On verrouille l'accès pour être le seul à chercher une place
+        with current_lock:
+            for _ in range(100):
+                rx = random.randint(0, config.MAP_SIZE - 1)
+                ry = random.randint(0, config.MAP_SIZE - 1)
+                idx = utils.to_idx((rx, ry))
+                if current_shm.buf[idx] < config.PROIE:
+                    found = True
+                    break
+        
+        response = {
+            "start_x": rx, "start_y": ry,
+            "map_size": config.MAP_SIZE
+        }
+        client_socket.sendall(json.dumps(response).encode('utf-8'))
+    
+    current_shm.close()
+
+
+def environment_manager(drought_val):
+    try:
+        mgr_shm = shared_memory.SharedMemory(name=config.SHM_NAME)
+        mgr_lock = sysv_ipc.Semaphore(config.SEM_KEY)
+        mgr_mq = sysv_ipc.MessageQueue(config.MQ_KEY)
+    except:
+        return
+
+    print("[MANAGER] Prêt à recevoir des commandes.")
+    last_growth = time.time()
+    
+    while True:
+        # A. GESTION DES COMMANDES (ADD_PROIE, STOP, etc.)
+        try:
+            message, t = mgr_mq.receive(block=False)
+            msg = message.decode()
+            print(f"[MANAGER] Commande reçue : {msg}")
+
+            if msg == "STOP":
+                os.kill(os.getppid(), signal.SIGINT)
+                break
+            
+            elif msg == "ADD_PROIE":
+                # On lance une nouvelle proie indépendante
+                subprocess.Popen([sys.executable, "prey.py"])
+            
+            elif msg == "ADD_PREDATOR":
+                # On lance un nouveau prédateur indépendant
+                subprocess.Popen([sys.executable, "predator.py"])
+
+        except sysv_ipc.BusyError:
+            pass # Pas de message
+
+        # B. GESTION DE LA NATURE
+        if not drought_val.value and (time.time() - last_growth > 2.0):
+            # [LOCK] On verrouille pendant que l'herbe pousse
+            with mgr_lock:
+                for _ in range(5):
+                    idx = random.randint(0, (config.MAP_SIZE**2) - 1)
+                    if mgr_shm.buf[idx] == config.VIDE:
+                        mgr_shm.buf[idx] = config.HERBE
+            last_growth = time.time()
+        
+        time.sleep(0.1)
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, cleanup)
+    
+    # 1. Création Lock (Semaphore binaire)
+    try:
+        global_lock = sysv_ipc.Semaphore(config.SEM_KEY, flags=sysv_ipc.IPC_CREX, initial_value=1)
+    except sysv_ipc.ExistentialError:
+        s = sysv_ipc.Semaphore(config.SEM_KEY)
+        s.remove()
+        global_lock = sysv_ipc.Semaphore(config.SEM_KEY, flags=sysv_ipc.IPC_CREX, initial_value=1)
+
+    # 2. Création SHM
+    try:
+        shm = shared_memory.SharedMemory(name=config.SHM_NAME, create=True, size=config.MAP_SIZE**2)
+    except FileExistsError:
+        t = shared_memory.SharedMemory(name=config.SHM_NAME)
+        t.unlink()
+        shm = shared_memory.SharedMemory(name=config.SHM_NAME, create=True, size=config.MAP_SIZE**2)
+
+    for i in range(config.MAP_SIZE**2):
+        shm.buf[i] = config.HERBE if random.random() < 0.5 else config.VIDE
+
+    # 3. Création MQ
+    try:
+        mq = sysv_ipc.MessageQueue(config.MQ_KEY, flags=sysv_ipc.IPC_CREX)
+    except sysv_ipc.ExistentialError:
+        q = sysv_ipc.MessageQueue(config.MQ_KEY)
+        q.remove()
+        mq = sysv_ipc.MessageQueue(config.MQ_KEY, flags=sysv_ipc.IPC_CREX)
+
+    # 4. Lancement Manager
+    p_manager = Process(target=environment_manager, args=(drought_flag,))
+    p_manager.start()
+    children_processes.append(p_manager)
+
+    # 5. Lancement Initial
+    print(f"[ENV] Lancement initial...")
+    for _ in range(2): subprocess.Popen([sys.executable, "predator.py"])
+    for _ in range(4): subprocess.Popen([sys.executable, "prey.py"])
+
+    # 6. Boucle Serveur
+    print(f"[ENV] Serveur écoute sur {config.PORT}...")
+    
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind((config.HOST, config.PORT))
+        server_socket.listen(10)
+        
+        try:
+            while True:
+                client_socket, address = server_socket.accept()
+                p = Process(target=f, args=(client_socket, address))
+                p.start()
+                client_socket.close()
+        except KeyboardInterrupt:
+            cleanup(None, None)
