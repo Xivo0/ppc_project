@@ -24,15 +24,6 @@ while alive:
             shm.buf[utils.to_idx(self_pos)] = config.VIDE
         break
 
-    with sem:
-        index_actuel = (self_pos[1]*config.MAP_SIZE) + self_pos[0]
-        valeur_case = shm.buf[index_actuel]
-
-        if valeur_case >= config.PREDATEUR:
-            print(f"[{my_id}] s'est fait manger")
-            alive = False
-            break
-
     if energie < my_h:
 
         with sem:
