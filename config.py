@@ -8,6 +8,9 @@ SHM_NAME = "ppc_project_shm"
 SEM_KEY = 6742
 MQ_KEY = 11111
 
+SHM_COUNTERS_NAME = "ppc_project_stats"
+IDX_PROIE = 0
+IDX_PRED = 1
 
 
 VIDE = 0
