@@ -92,6 +92,12 @@ def f(client_socket, address):
                     # On fait += pour garder l'herbe s'il y en a (ex: 1 + 10 = 11 -> Proie sur herbe)
                     current_shm.buf[idx] += val_type
                     break
+
+        if rx != -1:
+        # On détermine le type en string pour utils
+        type_str = "PREDATOR" if val_type == config.PREDATEUR else "PREY"
+        # ON AJOUTE +1
+        utils.update_counts(current_lock, type_str, 1)
         
         # 3. RÉPONSE
         response = {
@@ -171,6 +177,19 @@ if __name__ == "__main__":
 
     for i in range(config.MAP_SIZE**2):
         shm.buf[i] = config.HERBE if random.random() < 0.5 else config.VIDE
+
+     try:
+        # 8 octets = 2 entiers de 4 octets
+        shm_stats = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME, create=True, size=8)
+    except FileExistsError:
+        t = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
+        t.unlink()
+        shm_stats = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME, create=True, size=8)
+    
+    # On met tout à 0 au début
+    stats_view = memoryview(shm_stats.buf).cast('i')
+    stats_view[0] = 0
+    stats_view[1] = 0
 
     # 3. Création MQ
     try:
