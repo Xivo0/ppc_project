@@ -54,31 +54,53 @@ def cleanup(signum, frame):
 def f(client_socket, address):
     try:
         current_shm = shared_memory.SharedMemory(name=config.SHM_NAME)
-        # On se connecte au Lock Système
+        # On utilise le Lock Système
         current_lock = sysv_ipc.Semaphore(config.SEM_KEY)
-    except:
+    except Exception as e:
+        print(f"[ERREUR] Impossible d'accéder aux ressources : {e}")
         return
 
     with client_socket:
-        rx, ry = 0, 0
-        found = False
+        # 1. ÉTAPE DE RÉCEPTION DU TYPE
+        # On attend que le client dise "Je suis un PREDATOR" ou "Je suis une PREY"
+        try:
+            msg = client_socket.recv(1024).decode('utf-8')
+        except:
+            return # Erreur de lecture
+
+        # Détermination de la valeur numérique à écrire
+        if "PREDATOR" in msg:
+            val_type = config.PREDATEUR
+        else:
+            val_type = config.PROIE
+
+        rx, ry = -1, -1 # Par défaut -1 si pas de place trouvée
         
-        # [LOCK] On verrouille l'accès pour être le seul à chercher une place
+        # 2. SECTION CRITIQUE (Recherche + Écriture)
         with current_lock:
-            for _ in range(100):
-                rx = random.randint(0, config.MAP_SIZE - 1)
-                ry = random.randint(0, config.MAP_SIZE - 1)
-                idx = utils.to_idx((rx, ry))
-                if current_shm.buf[idx] < config.PROIE:
-                    found = True
+            for _ in range(100): # 100 tentatives
+                tx = random.randint(0, config.MAP_SIZE - 1)
+                ty = random.randint(0, config.MAP_SIZE - 1)
+                idx = utils.to_idx((tx, ty))
+                
+                # Si la case est vide (0) ou herbe (1), on peut s'y installer
+                # Attention : on suppose que PROIE(10) et PREDATEUR(20) sont > HERBE(1)
+                if current_shm.buf[idx] <= config.HERBE:
+                    rx, ry = tx, ty
+                    
+                    # C'EST ICI LA CLÉ : On inscrit l'animal tout de suite !
+                    # On fait += pour garder l'herbe s'il y en a (ex: 1 + 10 = 11 -> Proie sur herbe)
+                    current_shm.buf[idx] += val_type
                     break
         
+        # 3. RÉPONSE
         response = {
-            "start_x": rx, "start_y": ry,
+            "start_x": rx,
+            "start_y": ry,
             "map_size": config.MAP_SIZE
         }
         client_socket.sendall(json.dumps(response).encode('utf-8'))
-    
+
     current_shm.close()
 
 
