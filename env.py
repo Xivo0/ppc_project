@@ -93,7 +93,7 @@ def f(client_socket, address):
                     current_shm.buf[idx] += val_type
                     break
 
-        if rx != -1:
+    if rx != -1:
         # On détermine le type en string pour utils
         type_str = "PREDATOR" if val_type == config.PREDATEUR else "PREY"
         # ON AJOUTE +1
