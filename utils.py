@@ -81,3 +81,31 @@ def calculer_direction(pos_actuelle, pos_cible):
 
 def in_range(pos1,pos2):
     return max(abs(pos1[0] - pos2[0]),abs(pos1[1] - pos2[1])) == 1
+
+
+def update_counts(lock, type_animal, delta):
+    try:
+        shm = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
+        # On voit la mémoire comme un tableau d'entiers ('i' = signed int)
+        stats = memoryview(shm.buf).cast('i')
+        
+        idx = config.IDX_PRED if type_animal == "PREDATOR" else config.IDX_PROIE
+        
+        with lock:
+            stats[idx] += delta
+            
+        shm.close()
+    except Exception as e:
+        print(f"Erreur update stats: {e}")
+
+def read_counts():
+    try:
+        shm = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
+        stats = memoryview(shm.buf).cast('i')
+        # Pas besoin de lock strict pour juste lire un entier pour de l'affichage
+        nb_p = stats[config.IDX_PROIE]
+        nb_l = stats[config.IDX_PRED]
+        shm.close()
+        return nb_p, nb_l
+    except:
+        return 0, 0
