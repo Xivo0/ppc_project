@@ -1,4 +1,12 @@
 import random, config, sysv_ipc
+from multiprocessing import shared_memory, resource_tracker
+
+def fix_tracker(shm):
+    """Empêche Python de supprimer la mémoire quand le processus s'arrête."""
+    try:
+        resource_tracker.unregister(shm._name, 'shared_memory')
+    except Exception:
+        pass
 
 def to_idx(pos):
     return(pos[1] * config.MAP_SIZE) + pos[0]
@@ -83,28 +91,38 @@ def in_range(pos1,pos2):
     return max(abs(pos1[0] - pos2[0]),abs(pos1[1] - pos2[1])) == 1
 
 
-def update_counts(lock, type_animal, delta):
+def update_counts(lock, type_str, delta):
+    """Met à jour les compteurs globaux de manière sécurisée."""
     try:
-        shm = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
-        # On voit la mémoire comme un tableau d'entiers ('i' = signed int)
-        stats = memoryview(shm.buf).cast('i')
-        
-        idx = config.IDX_PRED if type_animal == "PREDATOR" else config.IDX_PROIE
+        # On attache la SHM des stats
+        shm_stats = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
+        fix_tracker(shm_stats)
         
         with lock:
-            stats[idx] += delta
+            # On crée la vue
+            view = memoryview(shm_stats.buf).cast('i')
             
-        shm.close()
+            if type_str == "PREY":
+                view[config.IDX_PROIE] += delta
+            elif type_str == "PREDATOR":
+                view[config.IDX_PRED] += delta
+            
+            # CRUCIAL : On libère le pointeur avant de fermer la SHM
+            view.release()
+            
+        shm_stats.close()
     except Exception as e:
-        print(f"Erreur update stats: {e}")
+        print(f"[UTILS] Erreur update stats: {e}")
 
 def read_counts():
     try:
         shm = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
+        fix_tracker(shm)
         stats = memoryview(shm.buf).cast('i')
         # Pas besoin de lock strict pour juste lire un entier pour de l'affichage
         nb_p = stats[config.IDX_PROIE]
         nb_l = stats[config.IDX_PRED]
+        stats.release()
         shm.close()
         return nb_p, nb_l
     except:

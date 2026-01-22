@@ -8,11 +8,12 @@ import time
 import json
 import subprocess
 import os
+from threading import Thread
 
 import config
 import utils
 
-
+PARENT_PID = os.getpid()
 shm = None
 global_lock = None # semaphore utiliser comme un lock plutard
 mq = None
@@ -21,9 +22,19 @@ drought_flag = Value('b', False)
 
 
 def cleanup(signum, frame):
-    """Nettoyage des ressources lors de l'arrêt"""
-    print("\n[ENV] Arrêt du serveur...")
-    
+    current_pid = os.getpid()
+
+    if current_pid == PARENT_PID:
+        print(f"\n[ENV] Arrêt du serveur (Principal)...")
+    else:
+        sys.exit(0)
+
+    global stats_view
+    if 'stats_view' in globals():
+        try:
+            stats_view.release()
+        except: pass
+
     # Terminer les enfants
     for p in children_processes:
         if isinstance(p, subprocess.Popen) or isinstance(p, Process):
@@ -33,8 +44,16 @@ def cleanup(signum, frame):
     global shm
     if shm:
         shm.close()
-        try: shm.unlink()
+        try: 
+            shm.unlink()
+            print("[ENV] Mémoire partagée supprimée.")
         except: pass
+    # Nettoyage de la SHM des stats
+    try:
+        s_stats = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
+        s_stats.close()
+        s_stats.unlink()
+    except: pass
 
     # Nettoyage Lock
     global global_lock
@@ -52,62 +71,63 @@ def cleanup(signum, frame):
 
 
 def f(client_socket, address):
+    current_shm = None
     try:
         current_shm = shared_memory.SharedMemory(name=config.SHM_NAME)
         # On utilise le Lock Système
         current_lock = sysv_ipc.Semaphore(config.SEM_KEY)
-    except Exception as e:
-        print(f"[ERREUR] Impossible d'accéder aux ressources : {e}")
-        return
+    
 
-    with client_socket:
-        # 1. ÉTAPE DE RÉCEPTION DU TYPE
-        # On attend que le client dise "Je suis un PREDATOR" ou "Je suis une PREY"
-        try:
-            msg = client_socket.recv(1024).decode('utf-8')
-        except:
-            return # Erreur de lecture
+        with client_socket:
+            # 1. ÉTAPE DE RÉCEPTION DU TYPE
+            # On attend que le client dise "Je suis un PREDATOR" ou "Je suis une PREY"
+            try:
+                msg = client_socket.recv(1024).decode('utf-8')
+            except:
+                return # Erreur de lecture
 
-        # Détermination de la valeur numérique à écrire
-        if "PREDATOR" in msg:
-            val_type = config.PREDATEUR
-        else:
-            val_type = config.PROIE
+            # Détermination de la valeur numérique à écrire
+            if "PREDATOR" in msg:
+                val_type = config.PREDATEUR
+            else:
+                val_type = config.PROIE
 
-        rx, ry = -1, -1 # Par défaut -1 si pas de place trouvée
-        
-        # 2. SECTION CRITIQUE (Recherche + Écriture)
-        with current_lock:
-            for _ in range(100): # 100 tentatives
-                tx = random.randint(0, config.MAP_SIZE - 1)
-                ty = random.randint(0, config.MAP_SIZE - 1)
-                idx = utils.to_idx((tx, ty))
-                
-                # Si la case est vide (0) ou herbe (1), on peut s'y installer
-                # Attention : on suppose que PROIE(10) et PREDATEUR(20) sont > HERBE(1)
-                if current_shm.buf[idx] <= config.HERBE:
-                    rx, ry = tx, ty
+            rx, ry = -1, -1 # Par défaut -1 si pas de place trouvée
+            
+            # 2. SECTION CRITIQUE (Recherche + Écriture)
+            with current_lock:
+                for _ in range(100): # 100 tentatives
+                    tx = random.randint(0, config.MAP_SIZE - 1)
+                    ty = random.randint(0, config.MAP_SIZE - 1)
+                    idx = utils.to_idx((tx, ty))
                     
-                    # C'EST ICI LA CLÉ : On inscrit l'animal tout de suite !
-                    # On fait += pour garder l'herbe s'il y en a (ex: 1 + 10 = 11 -> Proie sur herbe)
-                    current_shm.buf[idx] += val_type
-                    break
+                    # Si la case est vide (0) ou herbe (1), on peut s'y installer
+                    # Attention : on suppose que PROIE(10) et PREDATEUR(20) sont > HERBE(1)
+                    if current_shm.buf[idx] <= config.HERBE:
+                        rx, ry = tx, ty
+                        
+                        # C'EST ICI LA CLÉ : On inscrit l'animal tout de suite !
+                        # On fait += pour garder l'herbe s'il y en a (ex: 1 + 10 = 11 -> Proie sur herbe)
+                        current_shm.buf[idx] += val_type
+                        break
 
-    if rx != -1:
-        # On détermine le type en string pour utils
-        type_str = "PREDATOR" if val_type == config.PREDATEUR else "PREY"
-        # ON AJOUTE +1
-        utils.update_counts(current_lock, type_str, 1)
-        
-        # 3. RÉPONSE
-        response = {
-            "start_x": rx,
-            "start_y": ry,
-            "map_size": config.MAP_SIZE
-        }
-        client_socket.sendall(json.dumps(response).encode('utf-8'))
+            if rx != -1:
+                # On détermine le type en string pour utils
+                type_str = "PREDATOR" if val_type == config.PREDATEUR else "PREY"
+                # ON AJOUTE +1
+                utils.update_counts(current_lock, type_str, 1)
+                
+                # 3. RÉPONSE
+                response = {
+                    "start_x": rx,
+                    "start_y": ry,
+                    "map_size": config.MAP_SIZE
+                }
+                client_socket.sendall(json.dumps(response).encode('utf-8'))
 
-    current_shm.close()
+    finally:
+        if current_shm:
+            current_shm.close()
 
 
 def environment_manager(drought_val):
@@ -178,7 +198,7 @@ if __name__ == "__main__":
     for i in range(config.MAP_SIZE**2):
         shm.buf[i] = config.HERBE if random.random() < 0.5 else config.VIDE
 
-     try:
+    try:
         # 8 octets = 2 entiers de 4 octets
         shm_stats = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME, create=True, size=8)
     except FileExistsError:
@@ -204,11 +224,6 @@ if __name__ == "__main__":
     p_manager.start()
     children_processes.append(p_manager)
 
-    # 5. Lancement Initial
-    print(f"[ENV] Lancement initial...")
-    for _ in range(2): subprocess.Popen([sys.executable, "predator.py"])
-    for _ in range(4): subprocess.Popen([sys.executable, "prey.py"])
-
     # 6. Boucle Serveur
     print(f"[ENV] Serveur écoute sur {config.PORT}...")
     
@@ -220,8 +235,9 @@ if __name__ == "__main__":
         try:
             while True:
                 client_socket, address = server_socket.accept()
-                p = Process(target=f, args=(client_socket, address))
-                p.start()
-                client_socket.close()
+                t = Thread(target=f, args=(client_socket, address))
+                t.daemon = True
+                t.start()
+                print(f"coucou connexion")
         except KeyboardInterrupt:
             cleanup(None, None)
