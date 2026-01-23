@@ -37,14 +37,14 @@ def initialisation_processus():
     return my_id, shm_name, h, r, response
 
 
-my_id, my_shm_name, my_h, my__r, response = initialisation_processus()
+my_id, my_shm_name, my_h, my_r, response = initialisation_processus()
 
 shm = shared_memory.SharedMemory(name=my_shm_name)
 utils.fix_tracker(shm)
 sem = sysv_ipc.Semaphore(config.SEM_KEY)
 
 self_pos = (response["start_x"], response["start_y"])
-energie = config.INITIAL_ENERGY
+energie = config.INITIAL_ENERGY_PREDATOR
 alive = True
 
 try:
@@ -56,7 +56,7 @@ try:
             print(f"[{my_id}] est mort de faim")
             break
 
-        if energie < my_h:
+        if energie <= my_h: # L'animal a faim, il cherche à manger
 
                 cible = utils.regarder_autour(self_pos, shm, 2, config.PROIE)
                 if cible == None:
@@ -69,12 +69,25 @@ try:
                     else:
                         nouvelle_pos = utils.calculer_direction(self_pos, cible)
                         self_pos = utils.update_map(shm, sem, self_pos,nouvelle_pos, config.PREDATEUR)   
-                        
+
+        if energie >= my_r: # L'animal est passif, il peut se reproduire
+                
+                choice = random.randint(0,2)
+                if choice == 0:
+                    child_h = my_h + random.randint(-10,10)
+                    child_r = my_h + random.randint(-10,10)    
+                    subprocess.Popen([sys.executable, "predator.py", str(child_h),str(child_r)]) #voir si on peut faire une position à côté de l'animal qui se reproduit
+                    energie -= config.COUT_REPRODUCTION
+                if choice == 1:
+                    nouvelle_pos = utils.nouvelle_pos_aleatoire(self_pos)
+                    self_pos = utils.update_map(shm, sem, self_pos,nouvelle_pos, config.PREDATEUR)    
+                else:
+                    continue #on laisse comme 3ème choix la possibilité de ne rien faire
+
         time.sleep(config.VITESSE_SIMU if hasattr(config, 'VITESSE_SIMU') else 0.5)                
 finally:
     utils.update_counts(sem, "PREDATOR", -1)
 
-    # 2. Nettoyage de la carte (Version LOUPS)
     try:
         with sem:
             idx = utils.to_idx(self_pos)
@@ -85,4 +98,4 @@ finally:
         pass
 
     shm.close()
-    print(f"[{my_id}] Loup mort. Ressources libérées.")
+    print(f"[{my_id}] Loup mort")

@@ -55,7 +55,7 @@ def regarder_autour(pos_actuelle, shm, portee, cherche_quoi):
 
                 if cherche_quoi == config.PROIE and val >= config.PROIE:
                     return(nx,ny)
-                elif cherche_quoi == config.HERBE and (val == config.HERBE or val == config.PROIE + config.HERBE):
+                elif cherche_quoi == config.HERBE and val == config.HERBE:
                     return(nx,ny)
     return None            
 
@@ -92,7 +92,6 @@ def in_range(pos1,pos2):
 
 
 def update_counts(lock, type_str, delta):
-    """Met à jour les compteurs globaux de manière sécurisée."""
     try:
         # On attache la SHM des stats
         shm_stats = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME)
@@ -107,7 +106,7 @@ def update_counts(lock, type_str, delta):
             elif type_str == "PREDATOR":
                 view[config.IDX_PRED] += delta
             
-            # CRUCIAL : On libère le pointeur avant de fermer la SHM
+            # On libère le pointeur avant de fermer la SHM
             view.release()
             
         shm_stats.close()

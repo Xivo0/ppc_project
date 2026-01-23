@@ -15,7 +15,7 @@ import utils
 
 PARENT_PID = os.getpid()
 shm = None
-global_lock = None # semaphore utiliser comme un lock plutard
+global_lock = None # semaphore utiliser comme un lock plus tard
 mq = None
 children_processes = []
 drought_flag = Value('b', False)
@@ -79,7 +79,6 @@ def f(client_socket, address):
     
 
         with client_socket:
-            # 1. ÉTAPE DE RÉCEPTION DU TYPE
             # On attend que le client dise "Je suis un PREDATOR" ou "Je suis une PREY"
             try:
                 msg = client_socket.recv(1024).decode('utf-8')
@@ -94,7 +93,6 @@ def f(client_socket, address):
 
             rx, ry = -1, -1 # Par défaut -1 si pas de place trouvée
             
-            # 2. SECTION CRITIQUE (Recherche + Écriture)
             with current_lock:
                 for _ in range(100): # 100 tentatives
                     tx = random.randint(0, config.MAP_SIZE - 1)
@@ -102,11 +100,9 @@ def f(client_socket, address):
                     idx = utils.to_idx((tx, ty))
                     
                     # Si la case est vide (0) ou herbe (1), on peut s'y installer
-                    # Attention : on suppose que PROIE(10) et PREDATEUR(20) sont > HERBE(1)
                     if current_shm.buf[idx] <= config.HERBE:
                         rx, ry = tx, ty
                         
-                        # C'EST ICI LA CLÉ : On inscrit l'animal tout de suite !
                         # On fait += pour garder l'herbe s'il y en a (ex: 1 + 10 = 11 -> Proie sur herbe)
                         current_shm.buf[idx] += val_type
                         break
@@ -142,7 +138,7 @@ def environment_manager(drought_val):
     last_growth = time.time()
     
     while True:
-        # A. GESTION DES COMMANDES (ADD_PROIE, STOP, etc.)
+        # GESTION DES COMMANDES (ADD_PROIE, STOP, etc.)
         try:
             message, t = mgr_mq.receive(block=False)
             msg = message.decode()
@@ -163,9 +159,9 @@ def environment_manager(drought_val):
         except sysv_ipc.BusyError:
             pass # Pas de message
 
-        # B. GESTION DE LA NATURE
+        # GESTION DE LA NATURE
         if not drought_val.value and (time.time() - last_growth > 2.0):
-            # [LOCK] On verrouille pendant que l'herbe pousse
+            # On verrouille pendant que l'herbe pousse
             with mgr_lock:
                 for _ in range(5):
                     idx = random.randint(0, (config.MAP_SIZE**2) - 1)
@@ -179,7 +175,6 @@ def environment_manager(drought_val):
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, cleanup)
     
-    # 1. Création Lock (Semaphore binaire)
     try:
         global_lock = sysv_ipc.Semaphore(config.SEM_KEY, flags=sysv_ipc.IPC_CREX, initial_value=1)
     except sysv_ipc.ExistentialError:
@@ -187,7 +182,7 @@ if __name__ == "__main__":
         s.remove()
         global_lock = sysv_ipc.Semaphore(config.SEM_KEY, flags=sysv_ipc.IPC_CREX, initial_value=1)
 
-    # 2. Création SHM
+    # Création SHM
     try:
         shm = shared_memory.SharedMemory(name=config.SHM_NAME, create=True, size=config.MAP_SIZE**2)
     except FileExistsError:
@@ -206,12 +201,12 @@ if __name__ == "__main__":
         t.unlink()
         shm_stats = shared_memory.SharedMemory(name=config.SHM_COUNTERS_NAME, create=True, size=8)
     
-    # On met tout à 0 au début
+    # On met tout à 0 au début dans les stats
     stats_view = memoryview(shm_stats.buf).cast('i')
     stats_view[0] = 0
     stats_view[1] = 0
 
-    # 3. Création MQ
+    # Création MQ
     try:
         mq = sysv_ipc.MessageQueue(config.MQ_KEY, flags=sysv_ipc.IPC_CREX)
     except sysv_ipc.ExistentialError:
@@ -219,12 +214,12 @@ if __name__ == "__main__":
         q.remove()
         mq = sysv_ipc.MessageQueue(config.MQ_KEY, flags=sysv_ipc.IPC_CREX)
 
-    # 4. Lancement Manager
+    # Lancement Manager
     p_manager = Process(target=environment_manager, args=(drought_flag,))
     p_manager.start()
     children_processes.append(p_manager)
 
-    # 6. Boucle Serveur
+    # Boucle Serveur
     print(f"[ENV] Serveur écoute sur {config.PORT}...")
     
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
@@ -241,3 +236,4 @@ if __name__ == "__main__":
                 print(f"coucou connexion")
         except KeyboardInterrupt:
             cleanup(None, None)
+    
