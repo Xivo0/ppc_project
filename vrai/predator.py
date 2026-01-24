@@ -33,7 +33,7 @@ alive = True
 my_index = -1
 
 try:
-    # 1. NAISSANCE
+    # naissance
     with sem:
         max_idx = config.IDX_PREDATOR_START + (config.MAX_PREDATOR * 2)
         for i in range(config.IDX_PREDATOR_START, max_idx, 2):
@@ -45,7 +45,12 @@ try:
                 
     if my_index == -1: sys.exit(0)
 
-    # 2. BOUCLE DE VIE
+    with sem:
+        view[my_index] = my_id
+        view[config.IDX_COUNT_PREDATOR] += 1
+
+
+    # boucle de vie
     while alive:
         energie -= config.COUT_VIE
 
@@ -53,27 +58,27 @@ try:
             print(f"[{my_id}] Loup mort de faim.")
             break
 
-        # A. CHASSE (Trouver et tuer une proie active)
+        # chasse (tue proie active)
         if energie < my_h:
             with sem:
                 view[my_index+1] = config.ETAT_ACTIF
                 
-                # Cherche une proie active
+                # cherche proie active
                 cible_pid = -1
                 for i in range(config.IDX_PREY_START, config.IDX_PREDATOR_START, 2):
                     if view[i] != 0 and view[i+1] == config.ETAT_ACTIF:
                         cible_pid = view[i]
-                        break # Cible verrouillée !
+                        break # cible trouvée
                         
-            # Envoi du coup de grâce (Hors du verrou pour ne pas bloquer)
+            # envoi signal pour tuer, hors du verrou pour ne pas bloquer
             if cible_pid != -1:
                 try:
-                    os.kill(cible_pid, signal.SIGTERM) # <--- LE CHOC IPC
+                    os.kill(cible_pid, signal.SIGTERM)
                     energie += config.GAIN_NOURRITURE
                     print(f"[{my_id}] J'ai mangé la proie {cible_pid} !")
-                except ProcessLookupError: pass # La proie était déjà morte
+                except ProcessLookupError: pass # la proie était déjà morte
 
-        # B. REPRODUCTION
+        # reproduction
         else:
             with sem: view[my_index+1] = config.ETAT_PASSIF
             if energie >= my_r and mq:
@@ -86,10 +91,11 @@ try:
         time.sleep(config.VITESSE_SIMU)
 
 finally:
-    # 3. NETTOYAGE
+    # nettoyage
     if my_index != -1:
         with sem:
             view[my_index] = 0
+            view[config.IDX_COUNT_PREDATOR] -= 1
             view[my_index+1] = config.ETAT_MORT
             
     view.release()

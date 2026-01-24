@@ -3,11 +3,11 @@ from multiprocessing import shared_memory
 import config
 import utils
 
-# --- SIGNAL HANDLER : La proie se fait manger ---
+
 def eaten_handler(signum, frame):
     global alive
     print(f"[{os.getpid()}] ARGH ! Je me suis fait manger par un loup !")
-    alive = False # Sortie propre de la boucle
+    alive = False
 
 def initialisation_processus():
     if len(sys.argv) > 2:
@@ -15,7 +15,7 @@ def initialisation_processus():
     else:
         h, r = config.DEFAULT_H_PREY, config.DEFAULT_R_PREY
 
-    # On demande la permission de naître à l'environnement
+    # onn demande la permission de naître à l'environnement
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((config.HOST, config.PORT))
         s.sendall("PROIE".encode())
@@ -25,7 +25,7 @@ def initialisation_processus():
             
     return os.getpid(), h, r
 
-signal.signal(signal.SIGTERM, eaten_handler) # Écoute du signal de mort
+signal.signal(signal.SIGTERM, eaten_handler) # écoute du signal de mort
 my_id, my_h, my_r = initialisation_processus()
 
 shm = shared_memory.SharedMemory(name=config.SHM_NAME)
@@ -42,18 +42,24 @@ alive = True
 my_index = -1
 
 try:
-    # S'inscrire dans la mémoire partagée
+    # inscription dans mémoire partagée
     with sem:
         for i in range(config.IDX_PREY_START, config.IDX_PREDATOR_START, 2):
-            if view[i] == 0: # Place libre trouvée
+            if view[i] == 0: # place libre trouvée
                 view[i] = my_id
                 view[i+1] = config.ETAT_ACTIF
                 my_index = i
                 break
                 
-    if my_index == -1: sys.exit(0) # Plus de place
+    if my_index == -1: sys.exit(0) # plus de place
 
-    # BOUCLE DE VIE
+    
+    with sem:
+        view[my_index] = my_id
+        view[config.IDX_COUNT_PREY] += 1
+
+    
+    # boucle de vie
     while alive:
         energie -= config.COUT_VIE
 
@@ -61,19 +67,19 @@ try:
             print(f"[{my_id}] Mort de faim.")
             break
 
-        # Manger l'herbe partagée
+        # manger l'herbe (partagée)
         if energie < my_h:
             with sem:
-                view[my_index+1] = config.ETAT_ACTIF # On devient actif
+                view[my_index+1] = config.ETAT_ACTIF
                 if view[config.IDX_HERBE] > 0:
                     view[config.IDX_HERBE] -= 1
                     energie += config.GAIN_NOURRITURE
                     print(f"[{my_id}] Miam ! Herbe restante : {view[config.IDX_HERBE]}")
 
-        # MODE PASSIF ET REPRODUCTION
+        # mode passif et reproduction
         else:
             with sem:
-                view[my_index+1] = config.ETAT_PASSIF # Cache des prédateurs
+                view[my_index+1] = config.ETAT_PASSIF
                 
             if energie >= my_r and mq:
                 try:
@@ -85,10 +91,11 @@ try:
         time.sleep(config.VITESSE_SIMU)
 
 finally:
-    # NETTOYAGE : Se retirer de la liste
+    # nettoyage: on se retire de la liste
     if my_index != -1:
         with sem:
-            view[my_index] = 0 # Libère le PID
+            view[my_index] = 0 # libère le PID
+            view[config.IDX_COUNT_PREY] -= 1
             view[my_index+1] = config.ETAT_MORT
             
     view.release()
