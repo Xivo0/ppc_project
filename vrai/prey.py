@@ -41,6 +41,8 @@ energie = config.INITIAL_ENERGY
 alive = True
 my_index = -1
 
+active = False # permet de garder en mémoire si animal actif ou pas
+
 try:
     # inscription dans mémoire partagée
     with sem:
@@ -71,16 +73,24 @@ try:
         if energie < my_h:
             with sem:
                 view[my_index+1] = config.ETAT_ACTIF
+                if not active:
+                    view[config.IDX_COUNT_ACTIVE_PREY] +=1
+                    active = True
                 if view[config.IDX_HERBE] > 0:
                     view[config.IDX_HERBE] -= 1
                     energie += config.GAIN_NOURRITURE
                     print(f"[{my_id}] Miam ! Herbe restante : {view[config.IDX_HERBE]}")
+                    print(f"Mon énergie : {energie}")
 
         # mode passif et reproduction
         else:
             with sem:
                 view[my_index+1] = config.ETAT_PASSIF
-                
+                if active: # permet de ne pas décrémenter le compteur de proies actives si on est déjà passif
+                    view[config.IDX_COUNT_ACTIVE_PREY] -=1
+                    active = False
+                else:
+                    continue
             if energie >= my_r and mq:
                 try:
                     mq.send("ADD_PROIE".encode())
@@ -94,8 +104,10 @@ finally:
     # nettoyage: on se retire de la liste
     if my_index != -1:
         with sem:
-            view[my_index] = 0 # libère le PID
+            view[my_index] = 0
             view[config.IDX_COUNT_PREY] -= 1
+            if active:
+                view[config.IDX_COUNT_ACTIVE_PREY] -=1
             view[my_index+1] = config.ETAT_MORT
             
     view.release()

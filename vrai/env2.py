@@ -91,11 +91,14 @@ def environment_manager(drought_val):
     while True:
 
         stats = {"nbr_prey" : mgr_view[config.IDX_COUNT_PREY],
-                 "nbr_predator" : mgr_view[config.IDX_COUNT_PREY],
+                 "nbr_active_prey" : mgr_view[config.IDX_COUNT_ACTIVE_PREY],
+                 "nbr_predator" : mgr_view[config.IDX_COUNT_PREDATOR],
+                 "nbr_active_predator" : mgr_view[config.IDX_COUNT_ACTIVE_PREDATOR],
                  "nbr_herbe" : mgr_view[config.IDX_HERBE]
                  }    
 
         mgr_mq.send(json.dumps(stats).encode(), type = 2)
+        print(json.dumps(stats))
         time.sleep(0.5)
 
         # gestion ressources via message queue
@@ -109,11 +112,11 @@ def environment_manager(drought_val):
                 with drought_val.get_lock():
                     drought_val.value = not drought_val.value
                     etat = "ACTIVÉE" if drought_val.value else "DÉSACTIVÉE"
-            '''elif msg == "ADD_PROIE":
+            elif msg == "ADD_PROIE":
                 subprocess.Popen([sys.executable, "prey.py"])
             elif msg == "ADD_PREDATOR":
                 subprocess.Popen([sys.executable, "predator.py"])
-            '''
+
         except sysv_ipc.BusyError:
             pass
 

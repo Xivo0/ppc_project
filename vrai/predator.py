@@ -32,6 +32,8 @@ energie = config.INITIAL_ENERGY
 alive = True
 my_index = -1
 
+active = False # permet de garder en mémoire si animal actif ou pas
+
 try:
     # naissance
     with sem:
@@ -62,6 +64,9 @@ try:
         if energie < my_h:
             with sem:
                 view[my_index+1] = config.ETAT_ACTIF
+                if not active:
+                    view[config.IDX_COUNT_ACTIVE_PREDATOR] +=1
+                    active = True
                 
                 # cherche proie active
                 cible_pid = -1
@@ -80,7 +85,13 @@ try:
 
         # reproduction
         else:
-            with sem: view[my_index+1] = config.ETAT_PASSIF
+            with sem: 
+                view[my_index+1] = config.ETAT_PASSIF
+                if active: # permet de ne pas décrémenter le compteur de proies actives si on est déjà passif
+                    view[config.IDX_COUNT_ACTIVE_PREDATOR] -=1
+                    active = False
+                else:
+                    continue
             if energie >= my_r and mq:
                 try:
                     mq.send("ADD_PREDATOR".encode())
@@ -96,6 +107,8 @@ finally:
         with sem:
             view[my_index] = 0
             view[config.IDX_COUNT_PREDATOR] -= 1
+            if active:
+                view[config.IDX_COUNT_ACTIVE_PREDATOR] -=1
             view[my_index+1] = config.ETAT_MORT
             
     view.release()

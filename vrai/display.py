@@ -1,22 +1,14 @@
 import tkinter as tk
-from multiprocessing import shared_memory
 import sysv_ipc
 import config
 import utils
+import json
 
 class SimulationDisplay:
     def __init__(self, root):
         self.root = root
         self.root.title("Tableau de Bord - Ecosystème IPC")
         self.root.geometry("400x300")
-        
-        try:
-            self.shm = shared_memory.SharedMemory(name=config.SHM_NAME)
-            self.view = memoryview(self.shm.buf).cast('i')
-        except FileNotFoundError:
-            print("Erreur : L'environnement n'est pas lancé.")
-            self.root.destroy()
-            return
 
         # Interface
         tk.Label(root, text="SURVEILLANCE DE L'ÉCOSYSTÈME", font=("Arial", 16, "bold"), pady=10).pack()
@@ -41,35 +33,26 @@ class SimulationDisplay:
         except sysv_ipc.ExistentialError:
             print("Erreur: Message Queue introuvable. Lancez env.py d'abord.")
             self.mq = None
+            self.root.destroy()
+            return
 
         self.update_view()
 
     def update_view(self):
         try:
-            # 1. Compter l'herbe
-            herbe = self.view[config.IDX_HERBE]
-
-            # 2. Compter les proies
-            p_total, p_actives = 0, 0
-            for i in range(config.IDX_PREY_START, config.IDX_PREDATOR_START, 2):
-                if self.view[i] != 0:
-                    p_total += 1
-                    if self.view[i+1] == config.ETAT_ACTIF: p_actives += 1
-
-            # 3. Compter les prédateurs
-            l_total = 0
-            max_idx = config.IDX_PREDATOR_START + (config.MAX_PREDATOR * 2)
-            for i in range(config.IDX_PREDATOR_START, max_idx, 2):
-                if self.view[i] != 0: l_total += 1
+            message, mtype = self.mq.receive(block=False, type=2)
+            stats = json.loads(message.decode())
+            print(json.dumps(stats))
 
             # Mise à jour de l'affichage
-            self.herbe_label.config(text=f"Herbe disponible : {herbe}")
-            self.prey_label.config(text=f"Proies en vie : {p_total}  (Actives : {p_actives})")
-            self.predator_label.config(text=f"Prédateurs en vie : {l_total}")
+            self.herbe_label.config(text=f"Herbe disponible : {stats['nbr_herbe']}")
+            self.prey_label.config(text=f"Proies en vie : {stats['nbr_prey']}  (Actives : {stats['nbr_active_prey']})")
+            self.predator_label.config(text=f"Prédateurs en vie : {stats['nbr_predator']} (Actives : {stats['nbr_active_predator']})")
 
-            self.root.after(200, self.update_view)
         except Exception:
-            pass # Si la mémoire est détruite pendant l'affichage
+            print("haha")
+            pass
+        self.root.after(200, self.update_view)
 
     def __del__(self):
         if hasattr(self, 'view'): self.view.release()
