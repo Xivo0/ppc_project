@@ -89,8 +89,6 @@ try:
                 if active: # permet de ne pas décrémenter le compteur de proies actives si on est déjà passif
                     view[config.IDX_COUNT_ACTIVE_PREY] -=1
                     active = False
-                else:
-                    continue
             if energie >= my_r and mq:
                 try:
                     mq.send("ADD_PROIE".encode())

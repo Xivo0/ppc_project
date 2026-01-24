@@ -78,6 +78,7 @@ def f(client_socket, address):
 def environment_manager(drought_val):
     try:
         mgr_shm = shared_memory.SharedMemory(name=config.SHM_NAME)
+        utils.fix_tracker(mgr_shm)
         mgr_view = memoryview(mgr_shm.buf).cast('i')
         mgr_lock = sysv_ipc.Semaphore(config.SEM_KEY)
         mgr_mq = sysv_ipc.MessageQueue(config.MQ_KEY)
@@ -94,11 +95,11 @@ def environment_manager(drought_val):
                  "nbr_active_prey" : mgr_view[config.IDX_COUNT_ACTIVE_PREY],
                  "nbr_predator" : mgr_view[config.IDX_COUNT_PREDATOR],
                  "nbr_active_predator" : mgr_view[config.IDX_COUNT_ACTIVE_PREDATOR],
-                 "nbr_herbe" : mgr_view[config.IDX_HERBE]
+                 "nbr_herbe" : mgr_view[config.IDX_HERBE],
+                 "env_pid": PARENT_PID
                  }    
 
         mgr_mq.send(json.dumps(stats).encode(), type = 2)
-        print(json.dumps(stats))
         time.sleep(0.5)
 
         # gestion ressources via message queue
@@ -108,14 +109,14 @@ def environment_manager(drought_val):
             if msg == "STOP":
                 os.kill(os.getppid(), signal.SIGINT)
                 break
-            elif msg == "seche":
-                with drought_val.get_lock():
-                    drought_val.value = not drought_val.value
-                    etat = "ACTIVÉE" if drought_val.value else "DÉSACTIVÉE"
             elif msg == "ADD_PROIE":
-                subprocess.Popen([sys.executable, "prey.py"])
+                subprocess.Popen([sys.executable, "prey.py"],
+                                 stdout=subprocess.DEVNULL, 
+                                 stderr=subprocess.DEVNULL)
             elif msg == "ADD_PREDATOR":
-                subprocess.Popen([sys.executable, "predator.py"])
+                subprocess.Popen([sys.executable, "predator.py"],
+                                 stdout=subprocess.DEVNULL, 
+                                 stderr=subprocess.DEVNULL)
 
         except sysv_ipc.BusyError:
             pass
@@ -131,9 +132,14 @@ def environment_manager(drought_val):
     mgr_view.release()
     mgr_shm.close()
 
+def weather_report(signum,frame):
+    with drought_flag.get_lock():
+        drought_flag.value = not drought_flag.value 
+        etat = "ACTIVÉE" if drought_flag.value else "DÉSACTIVÉE"
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGUSR1,weather_report)
     
     # calcul de la taille de la mémoire (1 case pour l'herbe, 2 pour chaque proie/prédateur)
     NB_ENTIERS = 1 + (config.MAX_PREY * 2) + (config.MAX_PREDATOR * 2)
@@ -149,6 +155,7 @@ if __name__ == "__main__":
 
     try:
         shm = shared_memory.SharedMemory(name=config.SHM_NAME, create=True, size=SIZE_IN_BYTES)
+        utils.fix_tracker(shm)
     except FileExistsError:
         t = shared_memory.SharedMemory(name=config.SHM_NAME)
         t.unlink()
@@ -165,7 +172,7 @@ if __name__ == "__main__":
         q = sysv_ipc.MessageQueue(config.MQ_KEY)
         q.remove()
         mq = sysv_ipc.MessageQueue(config.MQ_KEY, flags=sysv_ipc.IPC_CREX)
-
+    
     # lancement des sous-processus
     p_manager = Process(target=environment_manager, args=(drought_flag,))
     p_manager.start()

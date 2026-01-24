@@ -1,14 +1,15 @@
 import tkinter as tk
 import sysv_ipc
 import config
-import utils
 import json
+import os, signal
 
 class SimulationDisplay:
     def __init__(self, root):
         self.root = root
         self.root.title("Tableau de Bord - Ecosystème IPC")
         self.root.geometry("400x300")
+        self.env_pid = None
 
         # Interface
         tk.Label(root, text="SURVEILLANCE DE L'ÉCOSYSTÈME", font=("Arial", 16, "bold"), pady=10).pack()
@@ -42,35 +43,29 @@ class SimulationDisplay:
         try:
             message, mtype = self.mq.receive(block=False, type=2)
             stats = json.loads(message.decode())
-            print(json.dumps(stats))
-
-            # Mise à jour de l'affichage
+            self.env_pid = stats['env_pid']
+            print(self.env_pid)
+            # Mise à jour de l'affichage    
             self.herbe_label.config(text=f"Herbe disponible : {stats['nbr_herbe']}")
             self.prey_label.config(text=f"Proies en vie : {stats['nbr_prey']}  (Actives : {stats['nbr_active_prey']})")
             self.predator_label.config(text=f"Prédateurs en vie : {stats['nbr_predator']} (Actives : {stats['nbr_active_predator']})")
 
         except Exception:
-            print("haha")
             pass
         self.root.after(200, self.update_view)
 
-    def __del__(self):
-        if hasattr(self, 'view'): self.view.release()
-        if hasattr(self, 'shm'): self.shm.close()
-    
     def toggle_drought(self):
-        if self.mq:
-            try:
-                self.mq.send("seche".encode())
+        try:
+            os.kill(self.env_pid, signal.SIGUSR1)
 
-                self.is_drought = not self.is_drought
-                if self.is_drought:
-                    self.btn_drought.config(text="Désactiver Sécheresse", bg="red", fg="white")
-                else:
-                    self.btn_drought.config(text="Activer Sécheresse", bg="orange", fg="black")
+            self.is_drought = not self.is_drought
+            if self.is_drought:
+                self.btn_drought.config(text="Désactiver Sécheresse", bg="red", fg="white")
+            else:
+                self.btn_drought.config(text="Activer Sécheresse", bg="orange", fg="black")
 
-            except sysv_ipc.Error as e:
-                print(f"Erreur d'envoi : {e}")
+        except Exception as e:
+            print(f"Erreur lors de l'envoi du signal : {e}")
 
 if __name__ == "__main__":
     root = tk.Tk()
