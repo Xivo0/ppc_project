@@ -169,7 +169,7 @@ if __name__ == "__main__":
         mq = sysv_ipc.MessageQueue(config.MQ_KEY, flags=sysv_ipc.IPC_CREX)
     
     # lancement des sous-processus
-    t_manager = Target(target=environment_manager, args=(drought_flag,))
+    t_manager = Thread(target=environment_manager, args=(drought_flag,))
     t_manager.daemon = True
     t_manager.start()
 
