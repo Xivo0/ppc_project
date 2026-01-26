@@ -17,7 +17,6 @@ PARENT_PID = os.getpid()
 shm = None
 global_lock = None 
 mq = None
-children_processes = []
 drought_flag = Value('b', False)
 view = None
 
@@ -31,10 +30,6 @@ def cleanup(signum, frame):
     else:
         sys.exit(0)
 
-    # Terminer les enfants
-    for p in children_processes:
-        if isinstance(p, subprocess.Popen) or isinstance(p, Process):
-            p.terminate()
     global view, shm
     if view is not None:
         view.release()
@@ -174,9 +169,9 @@ if __name__ == "__main__":
         mq = sysv_ipc.MessageQueue(config.MQ_KEY, flags=sysv_ipc.IPC_CREX)
     
     # lancement des sous-processus
-    p_manager = Process(target=environment_manager, args=(drought_flag,))
-    p_manager.start()
-    children_processes.append(p_manager)
+    t_manager = Target(target=environment_manager, args=(drought_flag,))
+    t_manager.daemon = True
+    t_manager.start()
 
     print(f"[ENV] Serveur écoute sur {config.PORT}...")
     print(f"[ENV] Taille Mémoire: {SIZE_IN_BYTES} octets ({NB_ENTIERS} emplacements)")
