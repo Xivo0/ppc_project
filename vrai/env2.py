@@ -153,8 +153,6 @@ def environment_manager(drought_val):
             last_growth = time.time()
         
         time.sleep(0.1)
-    mgr_view.release()
-    mgr_shm.close()
 
 def weather_report(signum,frame):
     with drought_flag.get_lock():
