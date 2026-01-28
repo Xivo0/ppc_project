@@ -23,7 +23,6 @@ my_id, my_h, my_r, my_index = initialisation_processus()
 shm = shared_memory.SharedMemory(name=config.SHM_NAME)
 utils.fix_tracker(shm)
 sem = sysv_ipc.Semaphore(config.SEM_KEY)
-print("info",sem)
 view = memoryview(shm.buf).cast('i')
 
 try: mq = sysv_ipc.MessageQueue(config.MQ_KEY)
@@ -33,13 +32,15 @@ energie = config.INITIAL_ENERGY_PREDATOR
 alive = True
 
 active = False # permet de garder en mémoire si animal actif ou pas
+is_registered = False # si jamais processeur meurt/crée erreur avant d'initialiser sa place pour le "finally"
 
 try:
     # naissance
     with sem:
         view[my_index] = my_id
-        view[my_index+1] = config.ETAT_ACTIF
+        view[my_index+1] = config.ETAT_PASSIF
         view[config.IDX_COUNT_PREDATOR] += 1
+        is_registered = True
 
     # boucle de vie
     while alive:
@@ -52,9 +53,9 @@ try:
         # chasse (tue proie active)
         if energie < my_h:
             with sem:
-                view[my_index+1] = config.ETAT_ACTIF
                 if not active:
                     view[config.IDX_COUNT_ACTIVE_PREDATOR] +=1
+                    view[my_index+1] = config.ETAT_ACTIF
                     active = True
                 
                 # cherche proie active
@@ -76,9 +77,9 @@ try:
         # reproduction
         else:
             with sem: 
-                view[my_index+1] = config.ETAT_PASSIF
                 if active: # permet de ne pas décrémenter le compteur de proies actives si on est déjà passif
                     view[config.IDX_COUNT_ACTIVE_PREDATOR] -=1
+                    view[my_index+1] = config.ETAT_PASSIF
                     active = False
             if energie >= my_r and mq:
                 try:
@@ -94,9 +95,10 @@ finally:
     if my_index != -1:
         with sem:
             view[my_index] = 0
-            view[config.IDX_COUNT_PREDATOR] -= 1
-            if active:
-                view[config.IDX_COUNT_ACTIVE_PREDATOR] -=1
+            if is_registered:
+                view[config.IDX_COUNT_PREDATOR] -= 1
+                if active:
+                    view[config.IDX_COUNT_ACTIVE_PREDATOR] -=1
             view[my_index+1] = config.ETAT_MORT
             
     view.release()

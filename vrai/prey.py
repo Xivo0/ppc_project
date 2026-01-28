@@ -41,13 +41,15 @@ energie = config.INITIAL_ENERGY_PREY
 alive = True
 
 active = False # permet de garder en mémoire si animal actif ou pas
+is_registered = False # si jamais processeur meurt/crée erreur avant d'initialiser sa place pour le "finally"
 
 try:
     # inscription dans mémoire partagée
     with sem:
         view[my_index] = my_id
-        view[my_index+1] = config.ETAT_ACTIF
+        view[my_index+1] = config.ETAT_PASSIF
         view[config.IDX_COUNT_PREY] += 1
+        is_registered = True
     
     # boucle de vie
     while alive:
@@ -60,9 +62,9 @@ try:
         # manger l'herbe (partagée)
         if energie < my_h:
             with sem:
-                view[my_index+1] = config.ETAT_ACTIF
                 if not active:
                     view[config.IDX_COUNT_ACTIVE_PREY] +=1
+                    view[my_index+1] = config.ETAT_ACTIF
                     active = True
                 if view[config.IDX_HERBE] > 0:
                     view[config.IDX_HERBE] -= 1
@@ -73,9 +75,9 @@ try:
         # mode passif et reproduction
         else:
             with sem:
-                view[my_index+1] = config.ETAT_PASSIF
                 if active: # permet de ne pas décrémenter le compteur de proies actives si on est déjà passif
                     view[config.IDX_COUNT_ACTIVE_PREY] -=1
+                    view[my_index+1] = config.ETAT_PASSIF
                     active = False
             if energie >= my_r and mq:
                 try:
@@ -91,9 +93,10 @@ finally:
     if my_index != -1:
         with sem:
             view[my_index] = 0
-            view[config.IDX_COUNT_PREY] -= 1
-            if active:
-                view[config.IDX_COUNT_ACTIVE_PREY] -=1
+            if is_registered:
+                view[config.IDX_COUNT_PREY] -= 1
+                if active:
+                    view[config.IDX_COUNT_ACTIVE_PREY] -=1
             view[my_index+1] = config.ETAT_MORT
             
     view.release()

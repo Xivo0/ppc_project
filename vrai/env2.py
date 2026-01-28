@@ -149,7 +149,7 @@ def environment_manager(drought_val):
         if not drought_val.value and (time.time() - last_growth > 2.0):
             with mgr_lock:
                 # on ajoute 10 unités d'herbe
-                mgr_view[config.IDX_HERBE] += 20
+                mgr_view[config.IDX_HERBE] += 40
             last_growth = time.time()
         
         time.sleep(0.1)
@@ -163,7 +163,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGUSR1,weather_report)
     
-    # calcul de la taille de la mémoire (1 case pour l'herbe, 2 pour chaque proie/prédateur)
+    # calcul de la taille de la mémoire (1 case pour l'herbe, 2 pour le nombre de proies/prédateurs, 2 pour le nombre de proies/prédateurs actifs, 2 pour chaque proie/prédateur)
     NB_ENTIERS = 5 + (config.MAX_PREY * 2) + (config.MAX_PREDATOR * 2)
     SIZE_IN_BYTES = NB_ENTIERS * 4 # 4 octets par entier
 
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((config.HOST, config.PORT))
-        server_socket.listen(10)
+        server_socket.listen(50)
         
         try:
             while True:

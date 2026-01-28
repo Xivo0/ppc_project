@@ -8,7 +8,7 @@ class SimulationDisplay:
     def __init__(self, root):
         self.root = root
         self.root.title("Tableau de Bord - Ecosystème IPC")
-        self.root.geometry("400x300")
+        self.root.geometry("800x600")
         self.env_pid = None
 
         # Interface
