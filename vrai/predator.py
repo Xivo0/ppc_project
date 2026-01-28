@@ -15,42 +15,31 @@ def initialisation_processus():
         response = json.loads(s.recv(1024).decode())
         if response.get("status") == "FULL":
             sys.exit(0)
-            
-    return os.getpid(), h, r
+        idx = response.get("idx")    
+    return os.getpid(), h, r, idx
 
-my_id, my_h, my_r = initialisation_processus()
+my_id, my_h, my_r, my_index = initialisation_processus()
 
 shm = shared_memory.SharedMemory(name=config.SHM_NAME)
 utils.fix_tracker(shm)
 sem = sysv_ipc.Semaphore(config.SEM_KEY)
+print("info",sem)
 view = memoryview(shm.buf).cast('i')
 
 try: mq = sysv_ipc.MessageQueue(config.MQ_KEY)
 except: mq = None
 
-energie = config.INITIAL_ENERGY
+energie = config.INITIAL_ENERGY_PREDATOR
 alive = True
-my_index = -1
 
 active = False # permet de garder en mémoire si animal actif ou pas
 
 try:
     # naissance
     with sem:
-        max_idx = config.IDX_PREDATOR_START + (config.MAX_PREDATOR * 2)
-        for i in range(config.IDX_PREDATOR_START, max_idx, 2):
-            if view[i] == 0:
-                view[i] = my_id
-                view[i+1] = config.ETAT_ACTIF
-                my_index = i
-                break
-                
-    if my_index == -1: sys.exit(0)
-
-    with sem:
         view[my_index] = my_id
+        view[my_index+1] = config.ETAT_ACTIF
         view[config.IDX_COUNT_PREDATOR] += 1
-
 
     # boucle de vie
     while alive:
@@ -73,13 +62,14 @@ try:
                 for i in range(config.IDX_PREY_START, config.IDX_PREDATOR_START, 2):
                     if view[i] != 0 and view[i+1] == config.ETAT_ACTIF:
                         cible_pid = view[i]
+                        view[i+1] = config.ETAT_MORT #éviter race condition où un autre prédateur mange la proie pendant qu'elle se "nettoie"/se supprime
                         break # cible trouvée
                         
             # envoi signal pour tuer, hors du verrou pour ne pas bloquer
             if cible_pid != -1:
                 try:
                     os.kill(cible_pid, signal.SIGTERM)
-                    energie += config.GAIN_NOURRITURE
+                    energie += config.GAIN_VIANDE
                     print(f"[{my_id}] J'ai mangé la proie {cible_pid} !")
                 except ProcessLookupError: pass # la proie était déjà morte
 
@@ -92,7 +82,7 @@ try:
                     active = False
             if energie >= my_r and mq:
                 try:
-                    mq.send("ADD_PREDATOR".encode())
+                    mq.send("ADD_PREDATOR".encode(), type = 1)
                     energie -= config.COUT_REPRODUCTION
                     print(f"[{my_id}] Reproduction !")
                 except sysv_ipc.BusyError: pass

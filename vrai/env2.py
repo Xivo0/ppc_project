@@ -56,24 +56,52 @@ def cleanup(signum, frame):
         try: mq.remove()
         except: pass
 
-    sys.exit(0)
+    os._exit(0)
 
 # thread d'accueil des animaux
 def f(client_socket, address):
-    with client_socket:
-        try:
-            msg = client_socket.recv(1024).decode('utf-8')
-        except: return 
+    try:
+        shm = shared_memory.SharedMemory(name=config.SHM_NAME)
+        view = memoryview(shm.buf).cast('i')
+        sem = sysv_ipc.Semaphore(config.SEM_KEY)
+    except:
+        return
+    try:
+        with client_socket:
+            try:
+                msg = client_socket.recv(1024).decode('utf-8')
+            except: return
 
-        # Le serveur accepte tout le monde, l'animal vérifiera lui-même s'il y a de la place dans la SHM
-        response = {"status": "OK"}
-        client_socket.sendall(json.dumps(response).encode('utf-8'))
+            status = "FULL"
+            ind = -1
+
+            with sem:
+                if msg == "PROIE": 
+                    for i in range(config.IDX_PREY_START, config.IDX_PREDATOR_START,2): # multiplication par 2 car 2 cases pour un animal (PID + état)
+                        if view[i] == 0:
+                            view[i] = -1 # pour que la place soit réservée à l'animal jusqu'à ce qu'il mette son PID
+                            ind = i
+                            status = "OK"
+                            break
+                if msg == "PREDATOR": 
+                    for i in range(config.IDX_PREDATOR_START,config.IDX_PREDATOR_START + 2*config.MAX_PREDATOR,2):
+                        if view[i] == 0:
+                            view[i] = -1
+                            ind = i
+                            status = "OK"
+                            break            
+            # Le serveur donne la disponibilité à l'animal
+            response = {"status": status,"idx": ind}
+            client_socket.sendall(json.dumps(response).encode('utf-8'))
+    finally:
+        view.release()
+        shm.close()        
+
 
 # processus manager (météo et reproductions)
 def environment_manager(drought_val):
     try:
         mgr_shm = shared_memory.SharedMemory(name=config.SHM_NAME)
-        utils.fix_tracker(mgr_shm)
         mgr_view = memoryview(mgr_shm.buf).cast('i')
         mgr_lock = sysv_ipc.Semaphore(config.SEM_KEY)
         mgr_mq = sysv_ipc.MessageQueue(config.MQ_KEY)
@@ -99,19 +127,20 @@ def environment_manager(drought_val):
 
         # gestion ressources via message queue
         try:
-            message, t = mgr_mq.receive(block=False)
-            msg = message.decode()
-            if msg == "STOP":
-                os.kill(os.getppid(), signal.SIGINT)
-                break
-            elif msg == "ADD_PROIE":
-                subprocess.Popen([sys.executable, "prey.py"],
-                                 stdout=subprocess.DEVNULL, 
-                                 stderr=subprocess.DEVNULL)
-            elif msg == "ADD_PREDATOR":
-                subprocess.Popen([sys.executable, "predator.py"],
-                                 stdout=subprocess.DEVNULL, 
-                                 stderr=subprocess.DEVNULL)
+            while True:
+                message, t = mgr_mq.receive(block=False, type = 1)
+                msg = message.decode()
+                if msg == "STOP":
+                    os.kill(os.getpid(), signal.SIGINT)
+                    break
+                elif msg == "ADD_PROIE":
+                    subprocess.Popen([sys.executable, "prey.py"],
+                                    stdout=subprocess.DEVNULL, 
+                                    stderr=subprocess.DEVNULL)
+                elif msg == "ADD_PREDATOR":
+                    subprocess.Popen([sys.executable, "predator.py"],
+                                    stdout=subprocess.DEVNULL, 
+                                    stderr=subprocess.DEVNULL)
 
         except sysv_ipc.BusyError:
             pass
@@ -120,7 +149,7 @@ def environment_manager(drought_val):
         if not drought_val.value and (time.time() - last_growth > 2.0):
             with mgr_lock:
                 # on ajoute 10 unités d'herbe
-                mgr_view[config.IDX_HERBE] += 10
+                mgr_view[config.IDX_HERBE] += 20
             last_growth = time.time()
         
         time.sleep(0.1)
@@ -137,7 +166,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGUSR1,weather_report)
     
     # calcul de la taille de la mémoire (1 case pour l'herbe, 2 pour chaque proie/prédateur)
-    NB_ENTIERS = 1 + (config.MAX_PREY * 2) + (config.MAX_PREDATOR * 2)
+    NB_ENTIERS = 5 + (config.MAX_PREY * 2) + (config.MAX_PREDATOR * 2)
     SIZE_IN_BYTES = NB_ENTIERS * 4 # 4 octets par entier
 
     # création mémoire et IPC
@@ -150,7 +179,6 @@ if __name__ == "__main__":
 
     try:
         shm = shared_memory.SharedMemory(name=config.SHM_NAME, create=True, size=SIZE_IN_BYTES)
-        utils.fix_tracker(shm)
     except FileExistsError:
         t = shared_memory.SharedMemory(name=config.SHM_NAME)
         t.unlink()

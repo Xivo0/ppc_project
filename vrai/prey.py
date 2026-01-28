@@ -22,11 +22,11 @@ def initialisation_processus():
         response = json.loads(s.recv(1024).decode())
         if response.get("status") == "FULL":
             sys.exit(0)
-            
-    return os.getpid(), h, r
+        idx = response.get("idx")    
+    return os.getpid(), h, r, idx
 
 signal.signal(signal.SIGTERM, eaten_handler) # écoute du signal de mort
-my_id, my_h, my_r = initialisation_processus()
+my_id, my_h, my_r, my_index = initialisation_processus()
 
 shm = shared_memory.SharedMemory(name=config.SHM_NAME)
 utils.fix_tracker(shm)
@@ -37,29 +37,17 @@ try:
     mq = sysv_ipc.MessageQueue(config.MQ_KEY)
 except: mq = None
 
-energie = config.INITIAL_ENERGY
+energie = config.INITIAL_ENERGY_PREY
 alive = True
-my_index = -1
 
 active = False # permet de garder en mémoire si animal actif ou pas
 
 try:
     # inscription dans mémoire partagée
     with sem:
-        for i in range(config.IDX_PREY_START, config.IDX_PREDATOR_START, 2):
-            if view[i] == 0: # place libre trouvée
-                view[i] = my_id
-                view[i+1] = config.ETAT_ACTIF
-                my_index = i
-                break
-                
-    if my_index == -1: sys.exit(0) # plus de place
-
-    
-    with sem:
         view[my_index] = my_id
+        view[my_index+1] = config.ETAT_ACTIF
         view[config.IDX_COUNT_PREY] += 1
-
     
     # boucle de vie
     while alive:
@@ -78,7 +66,7 @@ try:
                     active = True
                 if view[config.IDX_HERBE] > 0:
                     view[config.IDX_HERBE] -= 1
-                    energie += config.GAIN_NOURRITURE
+                    energie += config.GAIN_HERBE
                     print(f"[{my_id}] Miam ! Herbe restante : {view[config.IDX_HERBE]}")
                     print(f"Mon énergie : {energie}")
 
@@ -91,7 +79,7 @@ try:
                     active = False
             if energie >= my_r and mq:
                 try:
-                    mq.send("ADD_PROIE".encode())
+                    mq.send("ADD_PROIE".encode(), type = 1)
                     energie -= config.COUT_REPRODUCTION
                     print(f"[{my_id}] Reproduction !")
                 except sysv_ipc.BusyError: pass

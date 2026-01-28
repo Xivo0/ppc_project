@@ -28,6 +28,9 @@ class SimulationDisplay:
                                      bg="orange", fg="black",
                                      command=self.toggle_drought)
         self.btn_drought.pack(pady=20)
+
+        self.btn_stop = tk.Button(root,text="STOP", bg="red", command= self.stop)
+        self.btn_stop.pack(pady=20)
         # Connexion à la Message Queue pour envoyer les ordres
         try:
             self.mq = sysv_ipc.MessageQueue(config.MQ_KEY)
@@ -40,18 +43,21 @@ class SimulationDisplay:
         self.update_view()
 
     def update_view(self):
+        last_message = None
         try:
-            message, mtype = self.mq.receive(block=False, type=2)
-            stats = json.loads(message.decode())
+            while True:
+                message, mtype = self.mq.receive(block=False, type=2)
+                last_message = message
+        except sysv_ipc.BusyError:
+            pass        
+        if last_message:
+            stats = json.loads(last_message.decode())
             self.env_pid = stats['env_pid']
-            print(self.env_pid)
             # Mise à jour de l'affichage    
             self.herbe_label.config(text=f"Herbe disponible : {stats['nbr_herbe']}")
             self.prey_label.config(text=f"Proies en vie : {stats['nbr_prey']}  (Actives : {stats['nbr_active_prey']})")
             self.predator_label.config(text=f"Prédateurs en vie : {stats['nbr_predator']} (Actives : {stats['nbr_active_predator']})")
 
-        except Exception:
-            pass
         self.root.after(200, self.update_view)
 
     def toggle_drought(self):
@@ -66,6 +72,9 @@ class SimulationDisplay:
 
         except Exception as e:
             print(f"Erreur lors de l'envoi du signal : {e}")
+
+    def stop(self):
+        self.mq.send("STOP".encode(), type = 1)        
 
 if __name__ == "__main__":
     root = tk.Tk()
